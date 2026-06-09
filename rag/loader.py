@@ -1,28 +1,43 @@
 import os
+from concurrent.futures import ThreadPoolExecutor
+
 import docx
 import pptx
 from pypdf import PdfReader
 
-def load_all_document(base_path="data"):
-    documents = []
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".txt"}
 
-    for root, dirs, files in os.walk(base_path):
+
+def iter_document_paths(base_path):
+    for root, _, files in os.walk(base_path):
         for file in files:
-            path = os.path.join(root, file)
+            ext = os.path.splitext(file)[1].lower()
+            if ext in SUPPORTED_EXTENSIONS:
+                yield os.path.join(root, file)
 
-            if file.endswith(".pdf"):
-                documents.append(read_pdf(path))
 
-            elif file.endswith(".docx"):
-                documents.append(read_docx(path))
+def read_document(path):
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".pdf":
+        return read_pdf(path)
+    if ext == ".docx":
+        return read_docx(path)
+    if ext == ".pptx":
+        return read_pptx(path)
+    if ext == ".txt":
+        return read_txt(path)
+    return ""
 
-            elif file.endswith(".pptx"):
-                documents.append(read_pptx(path))
+def load_all_document(base_path="data"):
+    paths = list(iter_document_paths(base_path))
+    if not paths:
+        return []
 
-            elif file.endswith(".txt"):
-                documents.append(read_txt(path))
+    max_workers = min(8, max(2, (os.cpu_count() or 2)))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        docs = list(executor.map(read_document, paths))
 
-    return documents
+    return [d for d in docs if d and d.strip()]
 
 
 def read_pdf(path):

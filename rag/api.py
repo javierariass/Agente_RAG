@@ -3,12 +3,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
+from pathlib import Path
 from pydantic import BaseModel, Field
 
 try:
-    from lmstudio_chat import check_lmstudio, query_rag, warmup_index
+    from lmstudio_chat import (
+        check_lmstudio,
+        get_index_info,
+        query_rag,
+        warmup_index,
+    )
 except ModuleNotFoundError:
-    from rag.lmstudio_chat import check_lmstudio, query_rag, warmup_index
+    from rag.lmstudio_chat import (
+        check_lmstudio,
+        get_index_info,
+        query_rag,
+        warmup_index,
+    )
 
 
 @asynccontextmanager
@@ -40,6 +51,7 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     fragments: list[str]
+    sources: list[str]
 
 
 @app.get("/health")
@@ -79,9 +91,18 @@ def reindex():
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.get("/docs/info")
+def docs_info():
+    try:
+        return get_index_info()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
     return Response(status_code=204)
 
 
-app.mount("/", StaticFiles(directory="web", html=True), name="web")
+_WEB_DIR = Path(__file__).resolve().parent / "web"
+app.mount("/", StaticFiles(directory=str(_WEB_DIR), html=True), name="web")

@@ -83,6 +83,17 @@
     return wrap;
   }
 
+  function appendSources(sources) {
+    const wrap = document.createElement("div");
+    wrap.className = "msg msg--ai";
+    const bubble = document.createElement("div");
+    bubble.className = "bubble bubble--sources";
+    bubble.textContent = "Fuentes: " + sources.join("  ·  ");
+    wrap.appendChild(bubble);
+    chatEl.appendChild(wrap);
+    chatEl.scrollTop = chatEl.scrollHeight;
+  }
+
   function setStatus(state, text) {
     statusEl.classList.remove("status--ok", "status--bad", "status--warn", "status--unknown");
     statusEl.classList.add(`status--${state}`);
@@ -150,6 +161,9 @@
 
       const data = await res.json();
       appendMessage("ai", data.answer || "(sin respuesta)");
+      if (Array.isArray(data.sources) && data.sources.length) {
+        appendSources(data.sources);
+      }
     } catch (e) {
       typingNode.remove();
       appendMessage("error", `No se pudo contactar con la API: ${e.message || e}`);

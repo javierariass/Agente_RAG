@@ -277,6 +277,18 @@ body[data-theme="light"] .topbar {
   background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(0, 0, 0, 0.06));
 }
 
+.bubble--sources {
+  font-size: 12px;
+  opacity: 0.85;
+  padding: 6px 10px;
+  background: var(--surface);
+  color: var(--text-soft);
+  border: 1px solid var(--border);
+  box-shadow: none;
+  margin-top: -6px;
+  border-bottom-left-radius: 4px;
+}
+
 .msg--error .bubble {
   background: rgba(226, 87, 76, 0.1);
   color: var(--danger);

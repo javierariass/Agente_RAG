@@ -29,15 +29,22 @@ def read_document(path):
     return ""
 
 def load_all_document(base_path="data"):
+    """Devuelve una lista de tuplas (texto, fuente) con el contenido de cada
+    documento. La `fuente` es la ruta relativa al directorio de datos."""
     paths = list(iter_document_paths(base_path))
     if not paths:
         return []
 
     max_workers = min(8, max(2, (os.cpu_count() or 2)))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        docs = list(executor.map(read_document, paths))
+        contents = list(executor.map(read_document, paths))
 
-    return [d for d in docs if d and d.strip()]
+    docs = []
+    for path, text in zip(paths, contents):
+        if text and text.strip():
+            rel = os.path.relpath(path, base_path)
+            docs.append((text, rel))
+    return docs
 
 
 def read_pdf(path):

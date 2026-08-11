@@ -1,6 +1,9 @@
 import os
 import hashlib
 import json
+import logging
+import threading
+import time
 
 from openai import OpenAI
 from config import (
@@ -8,8 +11,9 @@ from config import (
     LMSTUDIO_MODEL,
     LMSTUDIO_TIMEOUT,
     LMSTUDIO_URL,
+    REINDEX_WATCH_SECONDS,
 )
-from loader import load_all_document
+from loader import iter_document_paths, load_all_document
 from rag_core import build_index, load_index, save_index, search
 
 client = OpenAI(
@@ -18,16 +22,25 @@ client = OpenAI(
     timeout=LMSTUDIO_TIMEOUT,
 )
 
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("rag")
+
 print(f"[rag] LM Studio endpoint: {LMSTUDIO_URL} (modelo={LMSTUDIO_MODEL})")
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
 INDEX_PATH = os.path.join(CACHE_DIR, "index.faiss")
-CHUNKS_PATH = os.path.join(CACHE_DIR, "chunks.pkl")
+ITEMS_PATH = os.path.join(CACHE_DIR, "items.pkl")
 META_PATH = os.path.join(CACHE_DIR, "meta.json")
 
-_index = None
-_chunks = None
+CACHE_VERSION = 2
+
+_snapshot = None            # (index, items) listo para consultas
+_loaded_signature = None    # firma de los documentos que generaron _snapshot
+_snapshot_lock = threading.RLock()
+_build_lock = threading.Lock()
+_rebuild_in_progress = False
+_watcher_started = False
 
 
 def _documents_signature(base_path):
@@ -37,7 +50,10 @@ def _documents_signature(base_path):
             if not file.lower().endswith((".pdf", ".docx", ".pptx", ".txt")):
                 continue
             path = os.path.join(root, file)
-            st = os.stat(path)
+            try:
+                st = os.stat(path)
+            except OSError:
+                continue
             rel = os.path.relpath(path, base_path)
             rows.append(f"{rel}|{st.st_mtime_ns}|{st.st_size}")
     rows.sort()
@@ -46,54 +62,164 @@ def _documents_signature(base_path):
 
 
 def _load_cached_index(signature):
-    if not (os.path.exists(INDEX_PATH) and os.path.exists(CHUNKS_PATH) and os.path.exists(META_PATH)):
+    if not (os.path.exists(INDEX_PATH) and os.path.exists(ITEMS_PATH) and os.path.exists(META_PATH)):
         return None, None
 
     try:
         with open(META_PATH, "r", encoding="utf-8") as f:
             meta = json.load(f)
-        if meta.get("signature") != signature:
+        if meta.get("signature") != signature or meta.get("version") != CACHE_VERSION:
             return None, None
-        index, chunks = load_index(INDEX_PATH, CHUNKS_PATH)
-        return index, chunks
-    except Exception:
+        index, items = load_index(INDEX_PATH, ITEMS_PATH)
+        return index, items
+    except Exception as exc:
+        log.warning("Cache de indice no utilizable, se reindexara: %s", exc)
         return None, None
 
 
-def _save_cached_index(index, chunks, signature):
+def _save_cached_index(index, items, signature):
     os.makedirs(CACHE_DIR, exist_ok=True)
-    save_index(index, chunks, INDEX_PATH, CHUNKS_PATH)
+    save_index(index, items, INDEX_PATH, ITEMS_PATH)
     with open(META_PATH, "w", encoding="utf-8") as f:
-        json.dump({"signature": signature, "chunks": len(chunks)}, f)
+        json.dump(
+            {"signature": signature, "version": CACHE_VERSION, "chunks": len(items)},
+            f,
+        )
+
+
+def _rebuild(signature):
+    """Reconstruye el indice desde cero y lo deja listo para consultas.
+
+    Corre dentro de `_build_lock` para que nunca haya dos reindexaciones a la
+    vez. Mientras reindexa, las consultas siguen sirviendose con el indice
+    anterior hasta que el nuevo queda listo.
+    """
+    global _snapshot, _loaded_signature
+
+    with _snapshot_lock:
+        if _snapshot is not None and _loaded_signature == signature:
+            return _snapshot
+
+    print(f"[rag] Cargando documentos desde {DATA_DIR} ...")
+    documents = load_all_document(DATA_DIR)
+    if not documents:
+        raise RuntimeError(
+            f"No se encontraron documentos legibles en {DATA_DIR}"
+        )
+    print(f"[rag] Indexando {len(documents)} documentos...")
+    index, items = build_index(documents)
+    _save_cached_index(index, items, signature)
+
+    with _snapshot_lock:
+        _snapshot = (index, items)
+        _loaded_signature = signature
+    print(f"[rag] Indexados {len(items)} fragmentos.")
+    return _snapshot
 
 
 def _ensure_index(force_rebuild=False):
-    global _index, _chunks
-    if _index is None:
-        signature = _documents_signature(DATA_DIR)
+    """Devuelve la snapshot (index, items) actual, cargandola de cache o
+    reconstruyendola si la firma de los documentos ha cambiado."""
+    global _snapshot, _loaded_signature
 
-        if not force_rebuild:
-            cached_index, cached_chunks = _load_cached_index(signature)
-            if cached_index is not None:
-                _index, _chunks = cached_index, cached_chunks
-                print(f"Indice cargado desde cache: {len(_chunks)} fragmentos.")
-                return _index, _chunks
+    with _snapshot_lock:
+        if _snapshot is not None and not force_rebuild:
+            return _snapshot
 
-        print(f"Cargando documentos desde {DATA_DIR} ...")
-        documents = load_all_document(DATA_DIR)
-        if not documents:
-            raise RuntimeError(
-                f"No se encontraron documentos legibles en {DATA_DIR}"
-            )
-        print(f"Indexando {len(documents)} documentos...")
-        _index, _chunks = build_index(documents)
-        _save_cached_index(_index, _chunks, signature)
-        print(f"Indexados {len(_chunks)} fragmentos.")
-    return _index, _chunks
+    signature = _documents_signature(DATA_DIR)
+
+    with _snapshot_lock:
+        if (
+            _snapshot is not None
+            and _loaded_signature == signature
+            and not force_rebuild
+        ):
+            return _snapshot
+
+    if not force_rebuild:
+        cached_index, cached_items = _load_cached_index(signature)
+        if cached_index is not None:
+            with _snapshot_lock:
+                _snapshot = (cached_index, cached_items)
+                _loaded_signature = signature
+            print(f"[rag] Indice cargado desde cache: {len(cached_items)} fragmentos.")
+            return _snapshot
+
+    with _build_lock:
+        return _rebuild(signature)
 
 
-def build_messages(question, frags):
-    context = "\n\n---\n\n".join(frags)
+def _rebuild_worker(signature):
+    global _rebuild_in_progress
+    try:
+        with _build_lock:
+            _rebuild(signature)
+    except Exception:
+        log.exception("Falló el reindexado automatico; se reintentara.")
+    finally:
+        with _snapshot_lock:
+            _rebuild_in_progress = False
+
+
+def _maybe_refresh_async():
+    """Si los documentos cambiaron en disco, lanza un reindexado en segundo
+    plano sin bloquear la consulta actual."""
+    global _rebuild_in_progress
+
+    with _snapshot_lock:
+        if _snapshot is None or _rebuild_in_progress:
+            return
+        current = _loaded_signature
+
+    signature = _documents_signature(DATA_DIR)
+    if signature == current:
+        return
+
+    with _snapshot_lock:
+        if _rebuild_in_progress:
+            return
+        _rebuild_in_progress = True
+
+    print("[rag] Se detectaron cambios en los documentos. Reindexando en segundo plano...")
+    thread = threading.Thread(
+        target=_rebuild_worker, args=(signature,), name="rag-reindex", daemon=True
+    )
+    thread.start()
+
+
+def _watcher_loop():
+    while True:
+        time.sleep(REINDEX_WATCH_SECONDS)
+        try:
+            _maybe_refresh_async()
+        except Exception:
+            log.exception("Error en el watcher de documentos")
+
+
+def _start_watcher():
+    global _watcher_started
+    with _snapshot_lock:
+        if _watcher_started:
+            return
+        _watcher_started = True
+    thread = threading.Thread(
+        target=_watcher_loop, name="rag-doc-watcher", daemon=True
+    )
+    thread.start()
+
+
+def build_messages(question, hits):
+    """Construye los mensajes para el LLM.
+
+    `hits` es una lista de tuplas (texto, fuente). Cada fragmento se etiqueta
+    con su documento para que la respuesta pueda citar la fuente correcta.
+    """
+    context_parts = []
+    for text, source in hits:
+        label = os.path.splitext(os.path.basename(source))[0]
+        context_parts.append(f"[{label}]\n{text}")
+    context = "\n\n---\n\n".join(context_parts)
+
     return [
         {
             "role": "system",
@@ -103,6 +229,8 @@ def build_messages(question, frags):
                 "Usa el contexto solo como base de evidencia y redacta la respuesta con tus propias palabras. "
                 "No menciones 'fragmentos', 'contexto' ni el mecanismo de recuperación. "
                 "Cita textualmente solo si el usuario lo pide o si una formulación exacta es necesaria. "
+                "Cuando la respuesta se apoye en un documento concreto, indica su nombre entre "
+                "paréntesis al final, por ejemplo (Decreto 123-2024). "
                 "Si la información no está en el contexto, dilo con franqueza y sugiere qué dato faltaría."
             ),
         },
@@ -120,9 +248,10 @@ def build_messages(question, frags):
 
 
 def query_rag(message, k=5, max_tokens=512, temperature=0.1):
-    index, chunks = _ensure_index()
-    frags = search(index, chunks, message, k=k)
-    messages = build_messages(message, frags)
+    _maybe_refresh_async()
+    index, items = _ensure_index()
+    hits = search(index, items, message, k=k)
+    messages = build_messages(message, hits)
 
     response = client.chat.completions.create(
         model=LMSTUDIO_MODEL,
@@ -131,9 +260,16 @@ def query_rag(message, k=5, max_tokens=512, temperature=0.1):
         max_tokens=max_tokens,
     )
 
+    texts = [t for t, _ in hits]
+    sources = []
+    for _, source in hits:
+        if source not in sources:
+            sources.append(source)
+
     return {
         "answer": response.choices[0].message.content,
-        "fragments": frags,
+        "fragments": texts,
+        "sources": sources,
     }
 
 
@@ -143,6 +279,23 @@ def send_to_rag(message, k=5):
 
 def warmup_index(force_rebuild=False):
     _ensure_index(force_rebuild=force_rebuild)
+    _start_watcher()
+
+
+def get_index_info():
+    """Metadatos utiles para monitorear el indice (ver /docs/info)."""
+    with _snapshot_lock:
+        snapshot = _snapshot
+        signature = _loaded_signature
+    n_chunks = len(snapshot[1]) if snapshot else 0
+    n_docs = len(list(iter_document_paths(DATA_DIR)))
+    return {
+        "documents": n_docs,
+        "chunks": n_chunks,
+        "signature": signature,
+        "data_dir": DATA_DIR,
+        "auto_reindex_seconds": REINDEX_WATCH_SECONDS,
+    }
 
 
 def check_lmstudio():

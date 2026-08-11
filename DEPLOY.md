@@ -10,6 +10,18 @@ Guía paso a paso para desplegar el sistema en una máquina anfitriona usando
 
 LM Studio corre en **otra máquina** y la API se conecta a ella vía red.
 
+### Resumen de cómo funciona el RAG
+
+- La carpeta `rag/data/` contiene todos los documentos (PDF, DOCX, PPTX, TXT,
+  y en subcarpetas). **Se puede actualizar en caliente**: un watcher comprueba
+  cada 30 s (configurable) si cambió algún documento y reindexa en segundo
+  plano *sin detener el servicio*. Las consultas siguen respondiendo con el
+  índice anterior hasta que el nuevo esté listo.
+- Los embeddings usan **"auto"**: CUDA si hay una GPU RTX realmente utilizable,
+  y CPU en caso contrario. No hay que configurar nada por servidor.
+- Cada respuesta incluye las **fuentes** de las que se extrajo la evidencia
+  (visibles en el chat).
+
 ---
 
 ## 1. Requisitos en la máquina anfitriona
@@ -21,6 +33,9 @@ LM Studio corre en **otra máquina** y la API se conecta a ella vía red.
   ```
 - Acceso de red **a** la máquina con LM Studio (puerto `1234`).
 - Puertos `3090` y `4000` libres y abiertos en el firewall local.
+- Los embeddings corren en la máquina anfitriona. Con GPU NVIDIA RTX usará
+  CUDA automáticamente; sin GPU funcionará en CPU (más lento pero correcto).
+  En el primer arranque descarga el modelo de embeddings (~90 MB).
 
 ---
 
@@ -166,6 +181,10 @@ pm2 restart agente-rag-web
 
 # Reconstruir el indice FAISS (si añadiste/cambiaste documentos)
 curl -X POST http://localhost:3090/reindex
+
+# Estado del indice: nº de documentos, fragmentos y si detecta cambios
+curl http://localhost:3090/docs/info
+# -> {"documents":12,"chunks":842,"signature":"...","auto_reindex_seconds":30}
 
 # Parar / arrancar todo
 pm2 stop all

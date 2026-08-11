@@ -59,3 +59,12 @@ LMSTUDIO_API_KEY = _clean(os.getenv("LMSTUDIO_API_KEY")) or "lm-studio"
 LMSTUDIO_TIMEOUT = float(_clean(os.getenv("LMSTUDIO_TIMEOUT")) or "60")
 
 CHUNK_SIZE = int(_clean(os.getenv("CHUNK_SIZE")) or "500")
+
+# Dispositivo para los embeddings: "cpu", "cuda" o "auto" (por defecto).
+# En "auto" se usa CUDA si hay una GPU realmente utilizable y se cae a CPU
+# en caso contrario. No hay que tocar nada para servidores con RTX.
+EMBEDDING_DEVICE = _clean(os.getenv("EMBEDDING_DEVICE")) or "auto"
+
+# Cada cuantos segundos el watcher comprueba si la carpeta data/ cambio
+# y, si es asi, reindexa en segundo plano sin detener el servicio.
+REINDEX_WATCH_SECONDS = int(_clean(os.getenv("REINDEX_WATCH_SECONDS")) or "30")

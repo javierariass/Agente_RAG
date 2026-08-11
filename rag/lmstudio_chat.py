@@ -99,14 +99,22 @@ def build_messages(question, frags):
             "role": "system",
             "content": (
                 "Eres un asistente experto en documentos legales y normativos. "
-                "Utiliza solamente el contexto proporcionado para responder a la pregunta. "
-                "Cita textualmente cuando sea posible. "
-                "Si la respuesta no está en el contexto, di que no lo sabes."
+                "Responde en español con una síntesis clara, útil y natural, no como una lista de fragmentos. "
+                "Usa el contexto solo como base de evidencia y redacta la respuesta con tus propias palabras. "
+                "No menciones 'fragmentos', 'contexto' ni el mecanismo de recuperación. "
+                "Cita textualmente solo si el usuario lo pide o si una formulación exacta es necesaria. "
+                "Si la información no está en el contexto, dilo con franqueza y sugiere qué dato faltaría."
             ),
         },
         {
             "role": "user",
-            "content": f"Contexto:\n{context}\n\nPregunta: {question}",
+            "content": (
+                "Instrucciones:\n"
+                "- Responde de forma directa y completa.\n"
+                "- Integra la evidencia disponible en una sola explicación coherente.\n"
+                "- No devuelvas el contexto tal cual ni enumeres trozos de texto.\n\n"
+                f"Contexto:\n{context}\n\nPregunta: {question}"
+            ),
         },
     ]
 

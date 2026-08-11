@@ -1,0 +1,10 @@
+{
+  "name": "agente-rag-api",
+  "private": true,
+  "scripts": {
+    "dev:api": "../rag_env/bin/python -m uvicorn api:app --host localhost --port 3090 --reload",
+    "dev:web": "../rag_env/bin/python -m http.server 4000 --bind localhost --directory web",
+    "dev": "sh -c 'trap \"kill 0\" INT TERM EXIT; ../rag_env/bin/python -m uvicorn api:app --host localhost --port 3090 --reload & ../rag_env/bin/python -m http.server 4000 --bind localhost --directory web & wait'",
+    "start": "../rag_env/bin/python -m uvicorn api:app --host localhost --port 3090"
+  }
+}

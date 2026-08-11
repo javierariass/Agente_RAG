@@ -55,29 +55,13 @@
     if (welcomeEl && welcomeEl.parentNode === chatEl) chatEl.removeChild(welcomeEl);
   }
 
-  function appendMessage(role, text, { fragments } = {}) {
+  function appendMessage(role, text) {
     removeWelcome();
     const wrap = document.createElement("div");
     wrap.className = `msg msg--${role}`;
     const bubble = document.createElement("div");
     bubble.className = "bubble";
     bubble.textContent = text;
-
-    if (fragments && fragments.length) {
-      const det = document.createElement("details");
-      det.className = "fragments";
-      const sum = document.createElement("summary");
-      sum.textContent = `Fragmentos usados (${fragments.length})`;
-      const ol = document.createElement("ol");
-      fragments.forEach((f) => {
-        const li = document.createElement("li");
-        li.textContent = f;
-        ol.appendChild(li);
-      });
-      det.appendChild(sum);
-      det.appendChild(ol);
-      bubble.appendChild(det);
-    }
 
     wrap.appendChild(bubble);
     chatEl.appendChild(wrap);
@@ -165,9 +149,7 @@
       }
 
       const data = await res.json();
-      appendMessage("ai", data.answer || "(sin respuesta)", {
-        fragments: data.fragments,
-      });
+      appendMessage("ai", data.answer || "(sin respuesta)");
     } catch (e) {
       typingNode.remove();
       appendMessage("error", `No se pudo contactar con la API: ${e.message || e}`);

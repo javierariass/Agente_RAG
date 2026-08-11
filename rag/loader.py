@@ -1,11 +1,14 @@
 import os
+import shutil
+import subprocess
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 
 import docx
 import pptx
 from pypdf import PdfReader
 
-SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".txt"}
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".txt", ".doc"}
 
 
 def iter_document_paths(base_path):
@@ -26,7 +29,46 @@ def read_document(path):
         return read_pptx(path)
     if ext == ".txt":
         return read_txt(path)
+    if ext == ".doc":
+        return read_doc(path)
     return ""
+
+
+def read_doc(path):
+    """Lee un .doc antiguo (OLE2) convirtiendolo con LibreOffice/antiword si
+    estan instalados. Si no hay convertidor disponible devuelve texto vacio y
+    el documento simplemente se omite (no rompe el servicio)."""
+    if shutil.which("antiword"):
+        try:
+            result = subprocess.run(
+                ["antiword", path],
+                capture_output=True, text=True, timeout=180,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout
+        except Exception:
+            pass
+
+    converter = shutil.which("soffice") or shutil.which("libreoffice")
+    if not converter:
+        return ""
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = subprocess.run(
+                [converter, "--headless", "--convert-to", "txt:Text",
+                 "--outdir", tmp, path],
+                capture_output=True, text=True, timeout=180,
+            )
+            if result.returncode != 0:
+                return ""
+            txt_files = [f for f in os.listdir(tmp) if f.lower().endswith(".txt")]
+            if not txt_files:
+                return ""
+            with open(os.path.join(tmp, txt_files[0]), "r",
+                      encoding="utf-8", errors="ignore") as f:
+                return f.read()
+    except Exception:
+        return ""
 
 def load_all_document(base_path="data"):
     """Devuelve una lista de tuplas (texto, fuente) con el contenido de cada

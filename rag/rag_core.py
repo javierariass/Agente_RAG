@@ -21,21 +21,31 @@ def _pick_device():
     """Devuelve el dispositivo para los embeddings.
 
     Prioridad:
-      1. EMBEDDING_DEVICE explícito en el .env (cpu / cuda).
-      2. 'cuda' si hay una GPU realmente utilizable (se comprueba con una
-         operacion minima que falla de forma capturable si la GPU no sirve,
-         p.ej. una tarjeta antigua con un build de PyTorch incompatible).
-      3. 'cpu' como respaldo universal.
+      1. EMBEDDING_DEVICE explicito en el .env (cpu / cuda).
+      2. 'auto' (o vacio): usa CUDA solo si hay una GPU realmente utilizable
+         (se comprueba con una operacion minima que falla de forma capturable
+         si la GPU no sirve, p.ej. una tarjeta antigua con un build de PyTorch
+         incompatible). En caso contrario usa CPU.
     """
-    if EMBEDDING_DEVICE.lower() in ("cpu", ""):
+    requested = EMBEDDING_DEVICE.lower()
+    if requested in ("cpu", ""):
         return "cpu"
-    if EMBEDDING_DEVICE.lower() == "cuda":
+    if requested == "cuda":
         if not torch.cuda.is_available():
             raise RuntimeError(
                 "EMBEDDING_DEVICE=cuda pero no se encontro GPU CUDA utilizable"
             )
         return "cuda"
-    return EMBEDDING_DEVICE
+    if torch.cuda.is_available():
+        try:
+            probe = torch.zeros(8, 8, device="cuda")
+            (probe + 1).cpu()
+            del probe
+            torch.cuda.empty_cache()
+            return "cuda"
+        except Exception:
+            pass
+    return "cpu"
 
 
 def get_embedder():

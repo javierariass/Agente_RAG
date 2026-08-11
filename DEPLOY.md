@@ -13,12 +13,14 @@ LM Studio corre en **otra máquina** y la API se conecta a ella vía red.
 ### Resumen de cómo funciona el RAG
 
 - La carpeta `rag/data/` contiene todos los documentos (PDF, DOCX, PPTX, TXT,
-  y en subcarpetas). **Se puede actualizar en caliente**: un watcher comprueba
-  cada 30 s (configurable) si cambió algún documento y reindexa en segundo
-  plano *sin detener el servicio*. Las consultas siguen respondiendo con el
-  índice anterior hasta que el nuevo esté listo.
-- Los embeddings usan **"auto"**: CUDA si hay una GPU RTX realmente utilizable,
-  y CPU en caso contrario. No hay que configurar nada por servidor.
+  DOC, y en subcarpetas). **Se puede actualizar en caliente**: un watcher
+  comprueba cada 30 s (configurable) si cambió algún documento y reindexa en
+  segundo plano *sin detener el servicio*. Las consultas siguen respondiendo
+  con el índice anterior hasta que el nuevo esté listo.
+- Los embeddings usan un **modelo multilingüe** (`paraphrase-multilingual-…`,
+  óptimo para documentos en español) y dispositivo **"auto"**: CUDA si hay una
+  GPU RTX realmente utilizable, y CPU en caso contrario. No hay que configurar
+  nada por servidor. En el primer arranque descarga el modelo (~470 MB).
 - Cada respuesta incluye las **fuentes** de las que se extrajo la evidencia
   (visibles en el chat).
 
@@ -35,7 +37,17 @@ LM Studio corre en **otra máquina** y la API se conecta a ella vía red.
 - Puertos `3090` y `4000` libres y abiertos en el firewall local.
 - Los embeddings corren en la máquina anfitriona. Con GPU NVIDIA RTX usará
   CUDA automáticamente; sin GPU funcionará en CPU (más lento pero correcto).
-  En el primer arranque descarga el modelo de embeddings (~90 MB).
+  En el primer arranque descarga el modelo de embeddings multilingüe (~470 MB).
+  La primera reindexación puede tardar unos minutos; el servicio arranca igual
+  y responde `503` ("El índice de documentos se está construyendo") hasta que
+  termina.
+- **(Opcional)** Para indexar documentos `.doc` antiguos (formato Word legacy)
+  instala LibreOffice en la máquina anfitriona:
+  ```bash
+  sudo apt install -y libreoffice-writer   # Ubuntu/Debian
+  ```
+  Si no está instalado, los `.doc` se omiten silenciosamente y el resto de
+  documentos (PDF, DOCX, PPTX, TXT) funcionan igual.
 
 ---
 
@@ -55,19 +67,18 @@ python3.12 -m venv rag_env
 
 ## 3. Configurar la conexión a LM Studio y los puertos
 
-Edita `rag/.env` (ya viene una plantilla):
+Copia la plantilla y edítala (`.env` está en `.gitignore`, no se clona):
+
+```bash
+cp rag/.env.example rag/.env
+nano rag/.env
+```
 
 ```ini
-# Maquina que aloja LM Studio
+# Maquina que aloja LM Studio (la PC donde corre LM Studio)
 LMSTUDIO_HOST=192.168.1.50      # <-- IP REAL de la PC con LM Studio
 LMSTUDIO_PORT=1234
 LMSTUDIO_MODEL=qwen2.5-coder-3b-instruct
-
-# Puertos publicados por PM2
-API_HOST=0.0.0.0
-API_PORT=3090
-WEB_HOST=0.0.0.0
-WEB_PORT=4000
 ```
 
 > Cuando cambie la IP de LM Studio basta con editar `LMSTUDIO_HOST` y

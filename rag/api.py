@@ -78,8 +78,11 @@ def query(payload: QueryRequest):
             temperature=payload.temperature,
         )
         return QueryResponse(**result)
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        status_code = 503 if "construyendo" in str(exc) else 500
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
 
 @app.post("/reindex")

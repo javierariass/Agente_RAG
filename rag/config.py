@@ -45,7 +45,9 @@ def _normalize_lmstudio_url(raw_url, host, port):
     return f"http://{host}:{port}/v1"
 
 
-EMBEDDING_MODEL = _clean(os.getenv("EMBEDDING_MODEL")) or "all-MiniLM-L6-v2"
+# Modelo multilingue para embeddings (funciona bien con documentos en español).
+# Si se cambia, el cache se invalida y se reindexa automaticamente.
+EMBEDDING_MODEL = _clean(os.getenv("EMBEDDING_MODEL")) or "paraphrase-multilingual-MiniLM-L12-v2"
 LMSTUDIO_MODEL = _clean(os.getenv("LMSTUDIO_MODEL")) or "qwen2.5-coder-3b-instruct"
 
 LMSTUDIO_HOST = _clean(os.getenv("LMSTUDIO_HOST"))

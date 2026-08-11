@@ -7,13 +7,14 @@ import time
 
 from openai import OpenAI
 from config import (
+    EMBEDDING_MODEL,
     LMSTUDIO_API_KEY,
     LMSTUDIO_MODEL,
     LMSTUDIO_TIMEOUT,
     LMSTUDIO_URL,
     REINDEX_WATCH_SECONDS,
 )
-from loader import iter_document_paths, load_all_document
+from loader import SUPPORTED_EXTENSIONS, iter_document_paths, load_all_document
 from rag_core import build_index, load_index, save_index, search
 
 client = OpenAI(
@@ -33,10 +34,11 @@ INDEX_PATH = os.path.join(CACHE_DIR, "index.faiss")
 ITEMS_PATH = os.path.join(CACHE_DIR, "items.pkl")
 META_PATH = os.path.join(CACHE_DIR, "meta.json")
 
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 _snapshot = None            # (index, items) listo para consultas
 _loaded_signature = None    # firma de los documentos que generaron _snapshot
+_ready = False              # True cuando _snapshot puede usarse para consultas
 _snapshot_lock = threading.RLock()
 _build_lock = threading.Lock()
 _rebuild_in_progress = False
@@ -47,7 +49,7 @@ def _documents_signature(base_path):
     rows = []
     for root, _, files in os.walk(base_path):
         for file in files:
-            if not file.lower().endswith((".pdf", ".docx", ".pptx", ".txt")):
+            if os.path.splitext(file)[1].lower() not in SUPPORTED_EXTENSIONS:
                 continue
             path = os.path.join(root, file)
             try:
@@ -68,7 +70,11 @@ def _load_cached_index(signature):
     try:
         with open(META_PATH, "r", encoding="utf-8") as f:
             meta = json.load(f)
-        if meta.get("signature") != signature or meta.get("version") != CACHE_VERSION:
+        if (
+            meta.get("signature") != signature
+            or meta.get("version") != CACHE_VERSION
+            or meta.get("model") != EMBEDDING_MODEL
+        ):
             return None, None
         index, items = load_index(INDEX_PATH, ITEMS_PATH)
         return index, items
@@ -82,7 +88,12 @@ def _save_cached_index(index, items, signature):
     save_index(index, items, INDEX_PATH, ITEMS_PATH)
     with open(META_PATH, "w", encoding="utf-8") as f:
         json.dump(
-            {"signature": signature, "version": CACHE_VERSION, "chunks": len(items)},
+            {
+                "signature": signature,
+                "version": CACHE_VERSION,
+                "model": EMBEDDING_MODEL,
+                "chunks": len(items),
+            },
             f,
         )
 
@@ -94,10 +105,11 @@ def _rebuild(signature):
     vez. Mientras reindexa, las consultas siguen sirviendose con el indice
     anterior hasta que el nuevo queda listo.
     """
-    global _snapshot, _loaded_signature
+    global _snapshot, _loaded_signature, _ready
 
     with _snapshot_lock:
         if _snapshot is not None and _loaded_signature == signature:
+            _ready = True
             return _snapshot
 
     print(f"[rag] Cargando documentos desde {DATA_DIR} ...")
@@ -113,6 +125,7 @@ def _rebuild(signature):
     with _snapshot_lock:
         _snapshot = (index, items)
         _loaded_signature = signature
+        _ready = True
     print(f"[rag] Indexados {len(items)} fragmentos.")
     return _snapshot
 
@@ -120,7 +133,7 @@ def _rebuild(signature):
 def _ensure_index(force_rebuild=False):
     """Devuelve la snapshot (index, items) actual, cargandola de cache o
     reconstruyendola si la firma de los documentos ha cambiado."""
-    global _snapshot, _loaded_signature
+    global _snapshot, _loaded_signature, _ready
 
     with _snapshot_lock:
         if _snapshot is not None and not force_rebuild:
@@ -142,11 +155,28 @@ def _ensure_index(force_rebuild=False):
             with _snapshot_lock:
                 _snapshot = (cached_index, cached_items)
                 _loaded_signature = signature
+                _ready = True
             print(f"[rag] Indice cargado desde cache: {len(cached_items)} fragmentos.")
             return _snapshot
 
     with _build_lock:
         return _rebuild(signature)
+
+
+def _launch_rebuild(signature):
+    """Lanza un reindexado en segundo plano (no bloquea el hilo que lo llama)."""
+    global _rebuild_in_progress
+
+    with _snapshot_lock:
+        if _rebuild_in_progress:
+            return
+        _rebuild_in_progress = True
+
+    print("[rag] Indexando en segundo plano...")
+    thread = threading.Thread(
+        target=_rebuild_worker, args=(signature,), name="rag-reindex", daemon=True
+    )
+    thread.start()
 
 
 def _rebuild_worker(signature):
@@ -164,8 +194,6 @@ def _rebuild_worker(signature):
 def _maybe_refresh_async():
     """Si los documentos cambiaron en disco, lanza un reindexado en segundo
     plano sin bloquear la consulta actual."""
-    global _rebuild_in_progress
-
     with _snapshot_lock:
         if _snapshot is None or _rebuild_in_progress:
             return
@@ -175,16 +203,8 @@ def _maybe_refresh_async():
     if signature == current:
         return
 
-    with _snapshot_lock:
-        if _rebuild_in_progress:
-            return
-        _rebuild_in_progress = True
-
     print("[rag] Se detectaron cambios en los documentos. Reindexando en segundo plano...")
-    thread = threading.Thread(
-        target=_rebuild_worker, args=(signature,), name="rag-reindex", daemon=True
-    )
-    thread.start()
+    _launch_rebuild(signature)
 
 
 def _watcher_loop():
@@ -248,6 +268,14 @@ def build_messages(question, hits):
 
 
 def query_rag(message, k=5, max_tokens=512, temperature=0.1):
+    with _snapshot_lock:
+        ready = _ready
+    if not ready:
+        raise RuntimeError(
+            "El índice de documentos se está construyendo. "
+            "Reintenta en unos segundos."
+        )
+
     _maybe_refresh_async()
     index, items = _ensure_index()
     hits = search(index, items, message, k=k)
@@ -278,7 +306,30 @@ def send_to_rag(message, k=5):
 
 
 def warmup_index(force_rebuild=False):
-    _ensure_index(force_rebuild=force_rebuild)
+    """Carga el indice de cache si existe (rapido) o lanza el primer indexado
+    en segundo plano. Nunca bloquea el arranque del servicio."""
+    global _snapshot, _loaded_signature, _ready
+
+    signature = _documents_signature(DATA_DIR)
+
+    if force_rebuild:
+        _launch_rebuild(signature)
+        _start_watcher()
+        return
+
+    with _snapshot_lock:
+        snapshot = _snapshot
+    if snapshot is None:
+        cached_index, cached_items = _load_cached_index(signature)
+        if cached_index is not None:
+            with _snapshot_lock:
+                _snapshot = (cached_index, cached_items)
+                _loaded_signature = signature
+                _ready = True
+            print(f"[rag] Indice cargado desde cache: {len(cached_items)} fragmentos.")
+        else:
+            _launch_rebuild(signature)
+
     _start_watcher()
 
 
@@ -287,9 +338,12 @@ def get_index_info():
     with _snapshot_lock:
         snapshot = _snapshot
         signature = _loaded_signature
+        ready = _ready
+        building = _rebuild_in_progress
     n_chunks = len(snapshot[1]) if snapshot else 0
     n_docs = len(list(iter_document_paths(DATA_DIR)))
     return {
+        "status": "ready" if ready else ("building" if building else "empty"),
         "documents": n_docs,
         "chunks": n_chunks,
         "signature": signature,

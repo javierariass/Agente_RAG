@@ -119,6 +119,16 @@
         setStatus("ok", "LM Studio conectado");
         statusEl.title = `${data.url} · ${data.model}`;
       }
+
+      fetch(`${API_BASE}/docs/info`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((info) => {
+          if (info && info.status !== "ready") {
+            setStatus("warn", info.status === "building" ? "indexando documentos…" : "índice vacío");
+            statusEl.title = `${info.documents} docs · ${info.chunks} fragmentos`;
+          }
+        })
+        .catch(() => {});
     } catch (e) {
       setStatus("bad", "API no responde");
       statusEl.title = String(e);

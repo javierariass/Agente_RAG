@@ -5,10 +5,11 @@ Guía paso a paso para desplegar el sistema en una máquina anfitriona usando
 
 | Proceso          | Puerto | Qué hace                                              |
 | ---------------- | -----: | ----------------------------------------------------- |
-| `agente-rag-api` | `3090` | API FastAPI (Uvicorn) que habla con LM Studio + RAG   |
+| `agente-rag-api` | `3090` | API FastAPI (Uvicorn) que habla con Ollama + RAG      |
 | `agente-rag-web` | `4000` | Servidor estático de `rag/web/` (interfaz de chat)    |
 
-LM Studio corre en **otra máquina** y la API se conecta a ella vía red.
+Ollama corre en **otra máquina** (el servidor con el agente) y la API se
+conecta a ella vía red usando su endpoint compatible con OpenAI (`/v1`).
 
 ### Resumen de cómo funciona el RAG
 
@@ -33,7 +34,7 @@ LM Studio corre en **otra máquina** y la API se conecta a ella vía red.
   ```bash
   sudo npm install -g pm2
   ```
-- Acceso de red **a** la máquina con LM Studio (puerto `1234`).
+- Acceso de red **a** la máquina servidor con Ollama (puerto `11434`).
 - Puertos `3090` y `4000` libres y abiertos en el firewall local.
 - Los embeddings corren en la máquina anfitriona. Con GPU NVIDIA RTX usará
   CUDA automáticamente; sin GPU funcionará en CPU (más lento pero correcto).
@@ -65,7 +66,7 @@ python3.12 -m venv rag_env
 
 ---
 
-## 3. Configurar la conexión a LM Studio y los puertos
+## 3. Configurar la conexión a Ollama y los puertos
 
 Copia la plantilla y edítala (`.env` está en `.gitignore`, no se clona):
 
@@ -75,21 +76,23 @@ nano rag/.env
 ```
 
 ```ini
-# Maquina que aloja LM Studio (la PC donde corre LM Studio)
-LMSTUDIO_HOST=192.168.1.50      # <-- IP REAL de la PC con LM Studio
-LMSTUDIO_PORT=1234
-LMSTUDIO_MODEL=qwen2.5-coder-3b-instruct
+# Maquina servidor que aloja Ollama (la PC "agente" de la red)
+OLLAMA_HOST=172.18.201.201      # <-- IP REAL del servidor con Ollama
+OLLAMA_PORT=11434
+OLLAMA_MODEL=qwen3.6:27b
 ```
 
-> Cuando cambie la IP de LM Studio basta con editar `LMSTUDIO_HOST` y
+> Cuando cambie la IP de Ollama basta con editar `OLLAMA_HOST` y
 > reiniciar la API. No hay que tocar código.
 
-### En la máquina que aloja LM Studio
+### En la máquina servidor que aloja Ollama
 
-1. Abrir **LM Studio → Developer → Local Server**.
-2. Cargar el modelo y activar **“Serve on local network”** (si no, solo
-   escuchará en `127.0.0.1`).
-3. Permitir el puerto `1234` en el firewall.
+1. Ollama debe estar sirviendo en la red (no solo en `127.0.0.1`): arráncalo
+   con `OLLAMA_HOST=0.0.0.0 ollama serve` o configura esa variable en su
+   servicio systemd.
+2. Verifica que el modelo esté descargado: `ollama list` debe mostrar
+   `qwen3.6:27b` (o el modelo configurado en `OLLAMA_MODEL`).
+3. Permitir el puerto `11434` en el firewall.
 
 ---
 
@@ -127,7 +130,7 @@ pm2 logs agente-rag-web --lines 20
 Deberías ver en los logs de la API algo así:
 
 ```
-[rag] LM Studio endpoint: http://192.168.1.50:1234/v1 (modelo=qwen2.5-coder-3b-instruct)
+[rag] Ollama endpoint: http://172.18.201.201:11434/v1 (modelo=qwen3.6:27b)
 Uvicorn running on http://0.0.0.0:3090
 ```
 
@@ -142,10 +145,10 @@ Desde la propia máquina:
 curl http://localhost:3090/health
 # -> {"status":"ok"}
 
-# La API alcanza LM Studio
-curl http://localhost:3090/lmstudio/health
+# La API alcanza Ollama
+curl http://localhost:3090/ollama/health
 # 200 con lista de modelos  -> conexion OK
-# 503 con detalle.error     -> revisa LMSTUDIO_HOST / firewall / "Serve on network"
+# 503 con detalle.error     -> revisa OLLAMA_HOST / firewall / que "ollama serve" escuche en la red
 
 # La web sirve el HTML
 curl -I http://localhost:4000/
@@ -230,8 +233,8 @@ pm2 restart agente-rag-api agente-rag-web
 
 | Síntoma                                              | Causa probable / acción                                         |
 | ---------------------------------------------------- | --------------------------------------------------------------- |
-| Indicador del header en rojo: "LM Studio inaccesible" | IP/puerto mal, firewall, o "Serve on local network" desactivado |
-| Indicador naranja: "modelo no cargado"                | El nombre de `LMSTUDIO_MODEL` no coincide con el ID en LM Studio |
+| Indicador del header en rojo: "Ollama inaccesible"    | IP/puerto mal, firewall, o `ollama serve` no escucha en la red  |
+| Indicador naranja: "modelo no cargado"                | El nombre de `OLLAMA_MODEL` no coincide con el de `ollama list` |
 | Indicador rojo: "API no responde"                     | `pm2 status` → la API está caída o el puerto 3090 cerrado        |
 | `pm2 status` muestra `errored`                        | `pm2 logs agente-rag-api --err --lines 100`                      |
 | Página web no carga desde otra PC                     | Falta abrir el puerto 4000 en el firewall                         |

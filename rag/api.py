@@ -7,15 +7,15 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 try:
-    from lmstudio_chat import (
-        check_lmstudio,
+    from ollama_chat import (
+        check_ollama,
         get_index_info,
         query_rag,
         warmup_index,
     )
 except ModuleNotFoundError:
-    from rag.lmstudio_chat import (
-        check_lmstudio,
+    from rag.ollama_chat import (
+        check_ollama,
         get_index_info,
         query_rag,
         warmup_index,
@@ -59,9 +59,9 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/lmstudio/health")
-def lmstudio_health():
-    info = check_lmstudio()
+@app.get("/ollama/health")
+def ollama_health():
+    info = check_ollama()
     status_code = 200 if info.get("ok") else 503
     if status_code == 503:
         raise HTTPException(status_code=status_code, detail=info)

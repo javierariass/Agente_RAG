@@ -103,11 +103,11 @@
   // ---------- Health check ----------
   async function checkHealth() {
     try {
-      const res = await fetch(`${API_BASE}/lmstudio/health`);
+      const res = await fetch(`${API_BASE}/ollama/health`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         const msg = err?.detail?.error || `HTTP ${res.status}`;
-        setStatus("bad", "LM Studio inaccesible");
+        setStatus("bad", "Ollama inaccesible");
         statusEl.title = msg;
         return;
       }
@@ -116,7 +116,7 @@
         setStatus("warn", "modelo no cargado");
         statusEl.title = `Disponibles: ${(data.available_models || []).join(", ") || "(ninguno)"}`;
       } else {
-        setStatus("ok", "LM Studio conectado");
+        setStatus("ok", "Ollama conectado");
         statusEl.title = `${data.url} · ${data.model}`;
       }
 

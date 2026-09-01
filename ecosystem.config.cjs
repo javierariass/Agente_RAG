@@ -7,7 +7,7 @@
  * Variables de entorno (todas opcionales, ver rag/.env):
  *   API_HOST, API_PORT     bind del API (default 0.0.0.0:3090)
  *   WEB_HOST, WEB_PORT     bind de la web (default 0.0.0.0:4000)
- *   LMSTUDIO_HOST, ...     configuracion del modelo, leida desde rag/.env
+ *   OLLAMA_HOST, ...       configuracion del modelo, leida desde rag/.env
  *
  * Arranque:
  *   pm2 start ecosystem.config.cjs

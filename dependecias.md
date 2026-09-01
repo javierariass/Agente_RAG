@@ -35,6 +35,6 @@ PRUEBAS RAPIDAS
 
 NOTAS
 
-1- En produccion debe estar activo LM Studio (o endpoint OpenAI compatible) segun la URL de rag/config.py.
+1- En produccion debe estar activo Ollama (o endpoint OpenAI compatible) segun la URL de rag/config.py.
 2- El primer arranque indexa documentos y puede tardar.
 3- Las siguientes ejecuciones usan cache en rag/.cache.

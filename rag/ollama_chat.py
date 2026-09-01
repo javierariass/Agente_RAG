@@ -8,25 +8,25 @@ import time
 from openai import OpenAI
 from config import (
     EMBEDDING_MODEL,
-    LMSTUDIO_API_KEY,
-    LMSTUDIO_MODEL,
-    LMSTUDIO_TIMEOUT,
-    LMSTUDIO_URL,
+    OLLAMA_API_KEY,
+    OLLAMA_MODEL,
+    OLLAMA_TIMEOUT,
+    OLLAMA_URL,
     REINDEX_WATCH_SECONDS,
 )
 from loader import SUPPORTED_EXTENSIONS, iter_document_paths, load_all_document
 from rag_core import build_index, load_index, save_index, search
 
 client = OpenAI(
-    base_url=LMSTUDIO_URL,
-    api_key=LMSTUDIO_API_KEY,
-    timeout=LMSTUDIO_TIMEOUT,
+    base_url=OLLAMA_URL,
+    api_key=OLLAMA_API_KEY,
+    timeout=OLLAMA_TIMEOUT,
 )
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("rag")
 
-print(f"[rag] LM Studio endpoint: {LMSTUDIO_URL} (modelo={LMSTUDIO_MODEL})")
+print(f"[rag] Ollama endpoint: {OLLAMA_URL} (modelo={OLLAMA_MODEL})")
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
@@ -282,7 +282,7 @@ def query_rag(message, k=5, max_tokens=512, temperature=0.1):
     messages = build_messages(message, hits)
 
     response = client.chat.completions.create(
-        model=LMSTUDIO_MODEL,
+        model=OLLAMA_MODEL,
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
@@ -352,18 +352,18 @@ def get_index_info():
     }
 
 
-def check_lmstudio():
-    """Comprueba que LM Studio responde en LMSTUDIO_URL.
+def check_ollama():
+    """Comprueba que Ollama responde en OLLAMA_URL.
 
     Devuelve un dict con `ok`, `url`, `model` y, si falla, `error`.
     """
-    info = {"url": LMSTUDIO_URL, "model": LMSTUDIO_MODEL}
+    info = {"url": OLLAMA_URL, "model": OLLAMA_MODEL}
     try:
         models = client.models.list()
         ids = [m.id for m in getattr(models, "data", [])]
         info["ok"] = True
         info["available_models"] = ids
-        info["model_loaded"] = LMSTUDIO_MODEL in ids if ids else None
+        info["model_loaded"] = OLLAMA_MODEL in ids if ids else None
     except Exception as exc:  # pragma: no cover - depende de red
         info["ok"] = False
         info["error"] = f"{type(exc).__name__}: {exc}"

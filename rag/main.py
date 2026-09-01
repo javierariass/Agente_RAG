@@ -1,4 +1,4 @@
-from lmstudio_chat import send_to_rag
+from ollama_chat import send_to_rag
 
 if __name__ == "__main__":
     message = input('Pregunta algo: \n')

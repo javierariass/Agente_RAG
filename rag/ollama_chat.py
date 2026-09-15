@@ -37,7 +37,7 @@ INDEX_PATH = os.path.join(CACHE_DIR, "index.faiss")
 ITEMS_PATH = os.path.join(CACHE_DIR, "items.pkl")
 META_PATH = os.path.join(CACHE_DIR, "meta.json")
 
-CACHE_VERSION = 3
+CACHE_VERSION = 4
 
 _snapshot = None            # (index, items) listo para consultas
 _loaded_signature = None    # firma de los documentos que generaron _snapshot

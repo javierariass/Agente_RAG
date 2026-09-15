@@ -110,16 +110,32 @@ def chunk_text(text, size=CHUNK_SIZE, overlap=100):
     return chunks
 
 
+def _folder_hint(source):
+    """Convierte la ruta relativa de un documento en una pista de categoria.
+
+    La estructura de carpetas (p.ej. "Resoluciones Ministeriales/MEP") suele
+    codificar informacion que el usuario usa para preguntar ("resoluciones del
+    MEP"), pero que no aparece en el texto del documento. Anteponiendo esta
+    pista a cada fragmento, la busqueda semantica y el modelo pueden asociarla.
+    """
+    folder = os.path.dirname(source).replace(os.sep, "/").strip("/")
+    return folder or None
+
+
 def build_index(documents):
     """Construye el indice FAISS.
 
     `documents` es una lista de tuplas (texto, fuente). Cada fragmento generado
-    conserva su fuente para poder citarla en la respuesta.
+    conserva su fuente para poder citarla en la respuesta. El texto de cada
+    fragmento se antepone con la ruta de carpetas del documento (ver
+    `_folder_hint`) para que la categoria tambien sea buscable.
     """
     items = []
     for text, source in documents:
+        hint = _folder_hint(source)
         for chunk in chunk_text(text):
-            items.append((chunk, source))
+            content = f"[{hint}]\n{chunk}" if hint else chunk
+            items.append((content, source))
 
     if not items:
         raise ValueError("No hay texto para indexar.")

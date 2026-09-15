@@ -239,7 +239,9 @@ def build_messages(question, hits):
     """
     context_parts = []
     for text, source in hits:
-        label = os.path.splitext(os.path.basename(source))[0]
+        folder = os.path.dirname(source).replace(os.sep, "/").strip("/")
+        name = os.path.splitext(os.path.basename(source))[0]
+        label = f"{folder}/{name}" if folder else name
         context_parts.append(f"[{label}]\n{text}")
     context = "\n\n---\n\n".join(context_parts)
 

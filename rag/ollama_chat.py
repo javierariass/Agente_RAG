@@ -2,6 +2,7 @@ import os
 import hashlib
 import json
 import logging
+import re
 import threading
 import time
 
@@ -247,9 +248,13 @@ def build_messages(question, hits):
             "role": "system",
             "content": (
                 "Eres un asistente experto en documentos legales y normativos. "
-                "Responde en español con una síntesis clara, útil y natural, no como una lista de fragmentos. "
+                "Responde SIEMPRE en español, nunca en inglés ni en ningún otro idioma, "
+                "sin importar en qué idioma parezca estar el razonamiento interno. "
+                "Responde con una síntesis clara, útil y natural, no como una lista de fragmentos. "
                 "Usa el contexto solo como base de evidencia y redacta la respuesta con tus propias palabras. "
                 "No menciones 'fragmentos', 'contexto' ni el mecanismo de recuperación. "
+                "No incluyas tu razonamiento, notas internas ni comentarios sobre cómo vas a responder "
+                "(nada de frases como 'We need answer in...' o 'User asks...'): entrega solo la respuesta final. "
                 "Cita textualmente solo si el usuario lo pide o si una formulación exacta es necesaria. "
                 "Cuando la respuesta se apoye en un documento concreto, indica su nombre entre "
                 "paréntesis al final, por ejemplo (Decreto 123-2024). "
@@ -269,6 +274,14 @@ def build_messages(question, hits):
     ]
 
 
+_THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_reasoning_tags(text):
+    """Quita bloques <think>...</think> por si el modelo los deja en `content`."""
+    return _THINK_TAG_RE.sub("", text).strip()
+
+
 def _message_text(msg):
     """Texto util de un mensaje del LLM.
 
@@ -277,7 +290,7 @@ def _message_text(msg):
     tokens antes de escribir la respuesta final. Si eso pasa, al menos
     aprovechamos el razonamiento en lugar de devolver una respuesta vacia.
     """
-    content = (getattr(msg, "content", None) or "").strip()
+    content = _strip_reasoning_tags((getattr(msg, "content", None) or "").strip())
     if content:
         return content
     for attr in ("reasoning_content", "reasoning"):
@@ -288,8 +301,14 @@ def _message_text(msg):
 
 
 def _complete(messages, max_tokens, temperature, think):
-    """Una llamada al LLM. Devuelve (texto, finish_reason)."""
-    extra_body = {"think": bool(think)}
+    """Una llamada al LLM. Devuelve (texto, finish_reason).
+
+    Ollama solo respeta el flag nativo `think` en su endpoint /api/chat; en el
+    endpoint compatible con OpenAI (el que usamos aqui) el razonamiento se
+    activa solo para modelos que lo soportan, y se controla con
+    `reasoning_effort` ("none" para desactivarlo).
+    """
+    extra_body = {"reasoning_effort": "medium" if think else "none"}
     response = client.chat.completions.create(
         model=OLLAMA_MODEL,
         messages=messages,

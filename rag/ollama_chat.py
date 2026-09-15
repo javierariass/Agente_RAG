@@ -8,8 +8,10 @@ import time
 from openai import OpenAI
 from config import (
     EMBEDDING_MODEL,
+    LLM_MAX_TOKENS,
     OLLAMA_API_KEY,
     OLLAMA_MODEL,
+    OLLAMA_THINK,
     OLLAMA_TIMEOUT,
     OLLAMA_URL,
     REINDEX_WATCH_SECONDS,
@@ -267,7 +269,40 @@ def build_messages(question, hits):
     ]
 
 
-def query_rag(message, k=5, max_tokens=512, temperature=0.1):
+def _message_text(msg):
+    """Texto util de un mensaje del LLM.
+
+    Los modelos de razonamiento (qwen3, deepseek-r1, gpt-oss...) devuelven el
+    razonamiento en un campo aparte y dejan `content` vacio si se quedan sin
+    tokens antes de escribir la respuesta final. Si eso pasa, al menos
+    aprovechamos el razonamiento en lugar de devolver una respuesta vacia.
+    """
+    content = (getattr(msg, "content", None) or "").strip()
+    if content:
+        return content
+    for attr in ("reasoning_content", "reasoning"):
+        value = (getattr(msg, attr, None) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _complete(messages, max_tokens, temperature, think):
+    """Una llamada al LLM. Devuelve (texto, finish_reason)."""
+    extra_body = {"think": bool(think)}
+    response = client.chat.completions.create(
+        model=OLLAMA_MODEL,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        extra_body=extra_body,
+    )
+    choice = response.choices[0]
+    finish_reason = getattr(choice, "finish_reason", None)
+    return _message_text(choice.message), finish_reason
+
+
+def query_rag(message, k=5, max_tokens=LLM_MAX_TOKENS, temperature=0.1):
     with _snapshot_lock:
         ready = _ready
     if not ready:
@@ -281,12 +316,27 @@ def query_rag(message, k=5, max_tokens=512, temperature=0.1):
     hits = search(index, items, message, k=k)
     messages = build_messages(message, hits)
 
-    response = client.chat.completions.create(
-        model=OLLAMA_MODEL,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
+    answer, finish_reason = _complete(messages, max_tokens, temperature, OLLAMA_THINK)
+
+    if not answer:
+        # Suele ocurrir cuando el modelo agota el cupo razonando (finish_reason
+        # "length"). Reintentamos una vez sin razonamiento y con mas margen.
+        log.warning(
+            "El modelo devolvio una respuesta vacia (finish_reason=%s). "
+            "Reintentando sin razonamiento y con mas tokens.",
+            finish_reason,
+        )
+        answer, finish_reason = _complete(
+            messages, max(max_tokens * 2, 1024), temperature, False
+        )
+
+    if not answer:
+        raise RuntimeError(
+            "El modelo devolvió una respuesta vacía "
+            f"(finish_reason={finish_reason}, modelo={OLLAMA_MODEL}). "
+            "Sube LLM_MAX_TOKENS o revisa que el modelo configurado sea el que "
+            "sirve Ollama."
+        )
 
     texts = [t for t, _ in hits]
     sources = []
@@ -295,7 +345,7 @@ def query_rag(message, k=5, max_tokens=512, temperature=0.1):
             sources.append(source)
 
     return {
-        "answer": response.choices[0].message.content,
+        "answer": answer,
         "fragments": texts,
         "sources": sources,
     }

@@ -153,10 +153,12 @@
       const res = await fetch(`${API_BASE}/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        // max_tokens lo decide la API (LLM_MAX_TOKENS en el .env): con modelos
+        // de razonamiento un cupo corto se agota pensando y la respuesta llega
+        // vacia.
         body: JSON.stringify({
           question,
           k: 5,
-          max_tokens: 512,
           temperature: 0.1,
         }),
       });
@@ -170,7 +172,14 @@
       }
 
       const data = await res.json();
-      appendMessage("ai", data.answer || "(sin respuesta)");
+      const answer = (data.answer || "").trim();
+      if (!answer) {
+        // No deberia ocurrir (la API ya reintenta y falla con detalle), pero si
+        // pasa es un fallo del modelo, no una respuesta valida.
+        appendMessage("error", "El modelo no devolvió ninguna respuesta. Revisa los logs de la API.");
+        return;
+      }
+      appendMessage("ai", answer);
       if (Array.isArray(data.sources) && data.sources.length) {
         appendSources(data.sources);
       }

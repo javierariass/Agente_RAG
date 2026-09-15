@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 try:
+    from config import LLM_MAX_TOKENS
     from ollama_chat import (
         check_ollama,
         get_index_info,
@@ -14,6 +15,7 @@ try:
         warmup_index,
     )
 except ModuleNotFoundError:
+    from rag.config import LLM_MAX_TOKENS
     from rag.ollama_chat import (
         check_ollama,
         get_index_info,
@@ -44,7 +46,7 @@ app.add_middleware(
 class QueryRequest(BaseModel):
     question: str = Field(..., min_length=3)
     k: int = Field(default=5, ge=1, le=20)
-    max_tokens: int = Field(default=512, ge=64, le=4096)
+    max_tokens: int = Field(default=LLM_MAX_TOKENS, ge=64, le=8192)
     temperature: float = Field(default=0.1, ge=0.0, le=2.0)
 
 

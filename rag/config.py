@@ -62,6 +62,22 @@ OLLAMA_TIMEOUT = float(_clean(os.getenv("OLLAMA_TIMEOUT")) or "60")
 
 CHUNK_SIZE = int(_clean(os.getenv("CHUNK_SIZE")) or "500")
 
+# Presupuesto de tokens para la respuesta del LLM. Con modelos de razonamiento
+# (qwen3, deepseek-r1, gpt-oss...) el "pensamiento" consume parte del cupo, asi
+# que un valor bajo puede agotarlo antes de que el modelo escriba la respuesta
+# final y devolver un content vacio.
+LLM_MAX_TOKENS = int(_clean(os.getenv("LLM_MAX_TOKENS")) or "1024")
+
+# Si es False (por defecto) se le pide a Ollama que no razone en voz alta, para
+# que todo el cupo de tokens se gaste en la respuesta visible. Ponlo a true si
+# quieres dejar que el modelo piense antes de responder (sube LLM_MAX_TOKENS).
+OLLAMA_THINK = (_clean(os.getenv("OLLAMA_THINK")) or "false").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+
 # Dispositivo para los embeddings: "cpu", "cuda" o "auto" (por defecto).
 # En "auto" se usa CUDA si hay una GPU realmente utilizable y se cae a CPU
 # en caso contrario. No hay que tocar nada para servidores con RTX.

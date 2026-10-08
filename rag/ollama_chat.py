@@ -266,9 +266,10 @@ def build_messages(question, hits):
 
     has_uploads = any(h["kind"] == "upload" for h in hits)
     upload_note = (
-        "El usuario ha adjuntado archivos a la conversación; si la pregunta se "
-        "refiere a 'el archivo', 'el documento' o 'esto', se refiere a ellos. "
-        "Puedes combinarlos con los documentos de la base documental. "
+        "El usuario ha adjuntado archivos a la conversación; de ellos solo ves "
+        "los pasajes más relevantes para la pregunta. Úsalos como fuente "
+        "auxiliar junto a la base documental; si la pregunta se refiere a "
+        "'el archivo', 'el documento' o 'esto', se refiere a ellos. "
         if has_uploads else ""
     )
 
@@ -368,20 +369,22 @@ def query_rag(message, k=5, max_tokens=LLM_MAX_TOKENS, temperature=0.1, attachme
     index, items = _ensure_index()
     q_emb = embed_query(message)
 
-    # Los adjuntos van primero: si el usuario sube un archivo, lo normal es que
-    # la pregunta sea sobre el.
-    upload_hits, missing = attachment_hits(attachments, q_emb)
     hits = [
-        {"text": text, "source": name, "page": page, "kind": "upload"}
-        for text, name, page in upload_hits
-    ]
-    for text, source, page in search(index, items, message, k=k, q_emb=q_emb):
-        hits.append({
+        {
             "text": _strip_folder_hint(text),
             "source": source,
             "page": page,
             "kind": "doc",
-        })
+        }
+        for text, source, page in search(index, items, message, k=k, q_emb=q_emb)
+    ]
+    # Los adjuntos son una fuente auxiliar: solo se suman sus fragmentos mas
+    # parecidos a la pregunta, detras de los de la base documental.
+    upload_hits, missing = attachment_hits(attachments, q_emb)
+    hits.extend(
+        {"text": text, "source": name, "page": page, "kind": "upload"}
+        for text, name, page in upload_hits
+    )
 
     messages = build_messages(message, hits)
 

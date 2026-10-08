@@ -3,7 +3,9 @@
 No se guardan en data/ ni entran en el indice principal: se extrae su texto,
 se trocea, se calculan sus embeddings y se quedan en memoria durante un tiempo
 limitado (UPLOAD_TTL_SECONDS). Cada consulta puede indicar los ids de los
-adjuntos que quiere usar, y sus fragmentos se combinan con los del indice.
+adjuntos que quiere usar y, como fuente auxiliar, se recuperan solo sus
+fragmentos mas parecidos a la pregunta (nunca el archivo entero), que se
+combinan con los del indice principal.
 """
 
 import os
@@ -18,10 +20,7 @@ from config import UPLOAD_MAX_FILES, UPLOAD_MAX_MB, UPLOAD_TTL_SECONDS
 from loader import UPLOAD_EXTENSIONS, read_document_parts
 from rag_core import chunk_text, embed_texts
 
-# Si el adjunto completo cabe en este numero de caracteres se manda entero al
-# modelo (preguntas tipo "resume este documento" necesitan verlo todo). Si es
-# mas grande, solo se mandan los fragmentos mas parecidos a la pregunta.
-FULL_TEXT_CHARS = 6000
+# Fragmentos de cada adjunto que se recuperan por similitud para cada pregunta.
 TOP_CHUNKS = 5
 
 _uploads = {}
@@ -122,7 +121,7 @@ def remove_attachment(file_id):
 
 
 def attachment_hits(file_ids, q_emb):
-    """Fragmentos relevantes de los adjuntos indicados.
+    """Fragmentos de los adjuntos indicados mas parecidos a la pregunta.
 
     Devuelve una lista de tuplas (texto, nombre, pagina). Los ids que ya no
     existen (caducados o del servidor anterior a un reinicio) se ignoran y se
@@ -139,16 +138,6 @@ def attachment_hits(file_ids, q_emb):
             continue
 
         chunks = upload["chunks"]
-        if upload["chars"] <= FULL_TEXT_CHARS:
-            # Documento corto: se manda entero, agrupado por pagina para que
-            # cada cita apunte a una pagina y no a un trozo suelto.
-            by_page = {}
-            for text, page in chunks:
-                by_page.setdefault(page, []).append(text)
-            for page, texts in by_page.items():
-                hits.append(("\n".join(texts), upload["name"], page))
-            continue
-
         scores = upload["embeddings"] @ q_emb[0]
         top = np.argsort(-scores)[:TOP_CHUNKS]
         # Se mantienen en el orden del documento para que se lean con sentido.

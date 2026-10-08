@@ -125,30 +125,24 @@ def _folder_hint(source):
 def build_index(documents):
     """Construye el indice FAISS.
 
-    `documents` es una lista de tuplas (texto, fuente). Cada fragmento generado
-    conserva su fuente para poder citarla en la respuesta. El texto de cada
+    `documents` es una lista de tuplas (partes, fuente), donde `partes` es una
+    lista de (pagina, texto). Cada fragmento generado conserva su fuente y su
+    pagina para poder citarla y enlazarla en la respuesta. El texto de cada
     fragmento se antepone con la ruta de carpetas del documento (ver
     `_folder_hint`) para que la categoria tambien sea buscable.
     """
     items = []
-    for text, source in documents:
+    for parts, source in documents:
         hint = _folder_hint(source)
-        for chunk in chunk_text(text):
-            content = f"[{hint}]\n{chunk}" if hint else chunk
-            items.append((content, source))
+        for page, text in parts:
+            for chunk in chunk_text(text):
+                content = f"[{hint}]\n{chunk}" if hint else chunk
+                items.append((content, source, page))
 
     if not items:
         raise ValueError("No hay texto para indexar.")
 
-    embedder = get_embedder()
-    texts = [t for t, _ in items]
-    embeddings = embedder.encode(
-        texts,
-        batch_size=EMBED_BATCH_SIZE,
-        convert_to_numpy=True,
-        normalize_embeddings=True,
-        show_progress_bar=True,
-    )
+    embeddings = embed_texts([t for t, _, _ in items], show_progress_bar=True)
 
     dim = embeddings.shape[1]
     index = faiss.IndexFlatIP(dim)
@@ -157,14 +151,24 @@ def build_index(documents):
     return index, items
 
 
-def search(index, items, query, k=5):
-    """Devuelve hasta `k` tuplas (texto, fuente) mas relevantes."""
-    embedder = get_embedder()
-    q_emb = embedder.encode(
-        [query],
+def embed_texts(texts, show_progress_bar=False):
+    return get_embedder().encode(
+        texts,
+        batch_size=EMBED_BATCH_SIZE,
         convert_to_numpy=True,
         normalize_embeddings=True,
+        show_progress_bar=show_progress_bar,
     )
+
+
+def embed_query(query):
+    return embed_texts([query])
+
+
+def search(index, items, query, k=5, q_emb=None):
+    """Devuelve hasta `k` tuplas (texto, fuente, pagina) mas relevantes."""
+    if q_emb is None:
+        q_emb = embed_query(query)
     _, indices = index.search(q_emb, k)
     return [items[i] for i in indices[0] if 0 <= i < len(items)]
 

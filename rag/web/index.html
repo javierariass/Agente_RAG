@@ -69,23 +69,45 @@
     </main>
 
     <form id="composer" class="composer" autocomplete="off">
-      <div class="composer-wrap">
-        <textarea
-          id="input"
-          rows="1"
-          placeholder="Escribe tu pregunta…"
-          aria-label="Escribe tu pregunta"
-        ></textarea>
-        <button id="send" type="submit" class="send-btn" aria-label="Enviar">
-          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-            <path
-              fill="currentColor"
-              d="M3.4 20.4 22 12 3.4 3.6 3 10l13 2-13 2 .4 6.4Z"
-            />
-          </svg>
-        </button>
+      <div class="composer-box">
+        <div id="attachments" class="attachments" hidden></div>
+        <div class="composer-wrap">
+          <button
+            id="attach-btn"
+            type="button"
+            class="attach-btn"
+            title="Adjuntar archivo (PDF, Word, Excel, PowerPoint, TXT, CSV)"
+            aria-label="Adjuntar archivo"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+              <path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z" />
+            </svg>
+          </button>
+          <input
+            id="file-input"
+            type="file"
+            multiple
+            hidden
+            accept=".pdf,.doc,.docx,.pptx,.txt,.xlsx,.xlsm,.csv"
+          />
+          <textarea
+            id="input"
+            rows="1"
+            placeholder="Escribe tu pregunta…"
+            aria-label="Escribe tu pregunta"
+          ></textarea>
+          <button id="send" type="submit" class="send-btn" aria-label="Enviar">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M3.4 20.4 22 12 3.4 3.6 3 10l13 2-13 2 .4 6.4Z"
+              />
+            </svg>
+          </button>
+        </div>
       </div>
       <p class="hint">
+        <kbd>+</kbd> o arrastra archivos para preguntar sobre ellos &nbsp;·&nbsp;
         <kbd>Enter</kbd> enviar &nbsp;·&nbsp; <kbd>Shift</kbd>+<kbd>Enter</kbd>
         nueva línea
       </p>

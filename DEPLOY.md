@@ -22,8 +22,16 @@ conecta a ella vía red usando su endpoint compatible con OpenAI (`/v1`).
   óptimo para documentos en español) y dispositivo **"auto"**: CUDA si hay una
   GPU RTX realmente utilizable, y CPU en caso contrario. No hay que configurar
   nada por servidor. En el primer arranque descarga el modelo (~470 MB).
-- Cada respuesta incluye las **fuentes** de las que se extrajo la evidencia
-  (visibles en el chat).
+- Cada respuesta cita sus **fuentes en línea**: un número junto a cada frase
+  (estilo DeepSeek). Al pasar el ratón se ve el documento, la página y un
+  extracto; al hacer clic se abre el documento (los PDF, en la página exacta)
+  a través de `GET /files/<ruta>`, que sirve los archivos de `rag/data/`.
+- Bajo cada respuesta hay botones para **copiar** el texto, **exportar a Word**
+  (`POST /export/docx`) y ver la lista de fuentes.
+- El botón **+** del chat (o arrastrar/pegar) permite adjuntar PDF, Word,
+  Excel, PowerPoint, TXT o CSV y preguntar sobre ellos además de la base
+  documental. Los adjuntos **no** se guardan en `data/`: viven en memoria
+  (4 h por defecto, `UPLOAD_TTL_SECONDS`) y se pierden si se reinicia la API.
 
 ---
 
@@ -226,6 +234,10 @@ git pull
 ./rag_env/bin/pip install -r requirements.txt   # por si hay nuevas deps
 pm2 restart agente-rag-api agente-rag-web
 ```
+
+> Si la actualización cambia el formato del índice (`CACHE_VERSION` en
+> `rag/ollama_chat.py`), la API reindexa sola al arrancar y responde `503`
+> hasta que termina.
 
 ---
 

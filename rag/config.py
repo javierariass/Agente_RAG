@@ -83,6 +83,11 @@ OLLAMA_THINK = (_clean(os.getenv("OLLAMA_THINK")) or "false").lower() in (
 # en caso contrario. No hay que tocar nada para servidores con RTX.
 EMBEDDING_DEVICE = _clean(os.getenv("EMBEDDING_DEVICE")) or "auto"
 
+# Archivos adjuntos en el chat (boton +). Se guardan solo en memoria.
+UPLOAD_MAX_MB = int(_clean(os.getenv("UPLOAD_MAX_MB")) or "25")
+UPLOAD_TTL_SECONDS = int(_clean(os.getenv("UPLOAD_TTL_SECONDS")) or str(4 * 3600))
+UPLOAD_MAX_FILES = int(_clean(os.getenv("UPLOAD_MAX_FILES")) or "100")
+
 # Cada cuantos segundos el watcher comprueba si la carpeta data/ cambio
 # y, si es asi, reindexa en segundo plano sin detener el servicio.
 REINDEX_WATCH_SECONDS = int(_clean(os.getenv("REINDEX_WATCH_SECONDS")) or "30")

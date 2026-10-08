@@ -1,25 +1,36 @@
-from fastapi import FastAPI, HTTPException
+import os
+from datetime import datetime
+from urllib.parse import quote, unquote
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from pathlib import Path
 from pydantic import BaseModel, Field
 
 try:
-    from config import LLM_MAX_TOKENS
+    from config import LLM_MAX_TOKENS, UPLOAD_MAX_MB
+    from attachments import AttachmentError, add_attachment, remove_attachment
+    from export_docx import build_docx
     from ollama_chat import (
         check_ollama,
         get_index_info,
         query_rag,
+        resolve_data_file,
         warmup_index,
     )
 except ModuleNotFoundError:
-    from rag.config import LLM_MAX_TOKENS
+    from rag.config import LLM_MAX_TOKENS, UPLOAD_MAX_MB
+    from rag.attachments import AttachmentError, add_attachment, remove_attachment
+    from rag.export_docx import build_docx
     from rag.ollama_chat import (
         check_ollama,
         get_index_info,
         query_rag,
+        resolve_data_file,
         warmup_index,
     )
 
@@ -48,12 +59,39 @@ class QueryRequest(BaseModel):
     k: int = Field(default=5, ge=1, le=20)
     max_tokens: int = Field(default=LLM_MAX_TOKENS, ge=64, le=8192)
     temperature: float = Field(default=0.1, ge=0.0, le=2.0)
+    # Ids devueltos por POST /upload para preguntar tambien sobre esos archivos.
+    attachments: list[str] = Field(default_factory=list, max_length=10)
+
+
+class Citation(BaseModel):
+    id: int
+    kind: str  # "doc" (base documental) o "upload" (archivo adjunto)
+    source: str
+    title: str
+    page: int | None = None
+    snippet: str
 
 
 class QueryResponse(BaseModel):
     answer: str
     fragments: list[str]
     sources: list[str]
+    citations: list[Citation] = []
+    missing_attachments: list[str] = []
+
+
+class ExportCitation(BaseModel):
+    n: int
+    title: str = ""
+    source: str = ""
+    page: int | None = None
+    kind: str = "doc"
+
+
+class ExportRequest(BaseModel):
+    question: str = ""
+    answer: str = Field(..., min_length=1)
+    citations: list[ExportCitation] = []
 
 
 @app.get("/health")
@@ -78,6 +116,7 @@ def query(payload: QueryRequest):
             k=payload.k,
             max_tokens=payload.max_tokens,
             temperature=payload.temperature,
+            attachments=payload.attachments,
         )
         return QueryResponse(**result)
     except HTTPException:
@@ -102,6 +141,62 @@ def docs_info():
         return get_index_info()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/upload")
+async def upload(request: Request):
+    """Recibe un archivo como cuerpo binario de la peticion (sin multipart) con
+    el nombre en la cabecera X-Filename (codificado con encodeURIComponent)."""
+    filename = unquote(request.headers.get("x-filename", ""))
+    limit = UPLOAD_MAX_MB * 1024 * 1024
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > limit:
+        raise HTTPException(status_code=413, detail=f"El archivo supera {UPLOAD_MAX_MB} MB")
+
+    data = bytearray()
+    async for chunk in request.stream():
+        data.extend(chunk)
+        if len(data) > limit:
+            raise HTTPException(status_code=413, detail=f"El archivo supera {UPLOAD_MAX_MB} MB")
+
+    try:
+        return await run_in_threadpool(add_attachment, filename, bytes(data))
+    except AttachmentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.delete("/upload/{file_id}")
+def delete_upload(file_id: str):
+    return {"deleted": remove_attachment(file_id)}
+
+
+@app.get("/files/{rel_path:path}")
+def get_file(rel_path: str):
+    """Sirve un documento de data/ para que las citas puedan abrirlo (los PDF
+    se abren en el navegador; el #page=N del enlace salta a la pagina)."""
+    full = resolve_data_file(rel_path)
+    if full is None:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    return FileResponse(
+        full,
+        filename=os.path.basename(full),
+        content_disposition_type="inline",
+    )
+
+
+@app.post("/export/docx")
+def export_docx(payload: ExportRequest):
+    content = build_docx(
+        payload.question,
+        payload.answer,
+        [c.model_dump() for c in payload.citations],
+    )
+    filename = datetime.now().strftime("respuesta-%Y%m%d-%H%M.docx")
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
 
 
 @app.get("/favicon.ico", include_in_schema=False)

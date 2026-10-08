@@ -18,7 +18,8 @@ from config import (
     REINDEX_WATCH_SECONDS,
 )
 from loader import SUPPORTED_EXTENSIONS, iter_document_paths, load_all_document
-from rag_core import build_index, load_index, save_index, search
+from rag_core import build_index, embed_query, load_index, save_index, search
+from attachments import attachment_hits
 
 client = OpenAI(
     base_url=OLLAMA_URL,
@@ -37,7 +38,8 @@ INDEX_PATH = os.path.join(CACHE_DIR, "index.faiss")
 ITEMS_PATH = os.path.join(CACHE_DIR, "items.pkl")
 META_PATH = os.path.join(CACHE_DIR, "meta.json")
 
-CACHE_VERSION = 4
+# v5: cada fragmento guarda tambien su pagina (texto, fuente, pagina).
+CACHE_VERSION = 5
 
 _snapshot = None            # (index, items) listo para consultas
 _loaded_signature = None    # firma de los documentos que generaron _snapshot
@@ -231,19 +233,44 @@ def _start_watcher():
     thread.start()
 
 
+def _source_label(source):
+    folder = os.path.dirname(source).replace(os.sep, "/").strip("/")
+    name = os.path.splitext(os.path.basename(source))[0]
+    return f"{folder}/{name}" if folder else name
+
+
+def _strip_folder_hint(text):
+    """Quita la linea "[carpeta]" que build_index antepone a cada fragmento."""
+    if text.startswith("[") and "]\n" in text[:300]:
+        return text.split("]\n", 1)[1]
+    return text
+
+
 def build_messages(question, hits):
     """Construye los mensajes para el LLM.
 
-    `hits` es una lista de tuplas (texto, fuente). Cada fragmento se etiqueta
-    con su documento para que la respuesta pueda citar la fuente correcta.
+    `hits` es una lista de dicts con `text`, `source`, `page` y `kind`
+    ("doc" o "upload"). Cada fragmento va numerado [1], [2]... para que el
+    modelo pueda citarlo justo despues de la frase que se apoya en el.
     """
     context_parts = []
-    for text, source in hits:
-        folder = os.path.dirname(source).replace(os.sep, "/").strip("/")
-        name = os.path.splitext(os.path.basename(source))[0]
-        label = f"{folder}/{name}" if folder else name
-        context_parts.append(f"[{label}]\n{text}")
+    for n, hit in enumerate(hits, start=1):
+        if hit["kind"] == "upload":
+            label = f"Archivo adjunto por el usuario: {hit['source']}"
+        else:
+            label = f"Documento: {_source_label(hit['source'])}"
+        if hit["page"]:
+            label += f" (pág. {hit['page']})"
+        context_parts.append(f"[{n}] {label}\n{hit['text']}")
     context = "\n\n---\n\n".join(context_parts)
+
+    has_uploads = any(h["kind"] == "upload" for h in hits)
+    upload_note = (
+        "El usuario ha adjuntado archivos a la conversación; si la pregunta se "
+        "refiere a 'el archivo', 'el documento' o 'esto', se refiere a ellos. "
+        "Puedes combinarlos con los documentos de la base documental. "
+        if has_uploads else ""
+    )
 
     return [
         {
@@ -258,8 +285,12 @@ def build_messages(question, hits):
                 "No incluyas tu razonamiento, notas internas ni comentarios sobre cómo vas a responder "
                 "(nada de frases como 'We need answer in...' o 'User asks...'): entrega solo la respuesta final. "
                 "Cita textualmente solo si el usuario lo pide o si una formulación exacta es necesaria. "
-                "Cuando la respuesta se apoye en un documento concreto, indica su nombre entre "
-                "paréntesis al final, por ejemplo (Decreto 123-2024). "
+                "CITAS: cada fuente del contexto lleva un número entre corchetes. Justo al final de "
+                "cada frase o párrafo que se apoye en una fuente, escribe su número entre corchetes, "
+                "por ejemplo: 'El plazo es de 30 días [2].' Si se apoya en varias, ponlas seguidas: [1][3]. "
+                "Usa solo números que existan en el contexto, no inventes otros, no pongas el nombre "
+                "del documento entre paréntesis y no añadas una lista de fuentes al final. "
+                f"{upload_note}"
                 "Si la información no está en el contexto, dilo con franqueza y sugiere qué dato faltaría."
             ),
         },
@@ -269,7 +300,8 @@ def build_messages(question, hits):
                 "Instrucciones:\n"
                 "- Responde de forma directa y completa.\n"
                 "- Integra la evidencia disponible en una sola explicación coherente.\n"
-                "- No devuelvas el contexto tal cual ni enumeres trozos de texto.\n\n"
+                "- No devuelvas el contexto tal cual ni enumeres trozos de texto.\n"
+                "- Marca cada afirmación con el número de su fuente, por ejemplo [1].\n\n"
                 f"Contexto:\n{context}\n\nPregunta: {question}"
             ),
         },
@@ -323,7 +355,7 @@ def _complete(messages, max_tokens, temperature, think):
     return _message_text(choice.message), finish_reason
 
 
-def query_rag(message, k=5, max_tokens=LLM_MAX_TOKENS, temperature=0.1):
+def query_rag(message, k=5, max_tokens=LLM_MAX_TOKENS, temperature=0.1, attachments=None):
     with _snapshot_lock:
         ready = _ready
     if not ready:
@@ -334,7 +366,23 @@ def query_rag(message, k=5, max_tokens=LLM_MAX_TOKENS, temperature=0.1):
 
     _maybe_refresh_async()
     index, items = _ensure_index()
-    hits = search(index, items, message, k=k)
+    q_emb = embed_query(message)
+
+    # Los adjuntos van primero: si el usuario sube un archivo, lo normal es que
+    # la pregunta sea sobre el.
+    upload_hits, missing = attachment_hits(attachments, q_emb)
+    hits = [
+        {"text": text, "source": name, "page": page, "kind": "upload"}
+        for text, name, page in upload_hits
+    ]
+    for text, source, page in search(index, items, message, k=k, q_emb=q_emb):
+        hits.append({
+            "text": _strip_folder_hint(text),
+            "source": source,
+            "page": page,
+            "kind": "doc",
+        })
+
     messages = build_messages(message, hits)
 
     answer, finish_reason = _complete(messages, max_tokens, temperature, OLLAMA_THINK)
@@ -359,17 +407,45 @@ def query_rag(message, k=5, max_tokens=LLM_MAX_TOKENS, temperature=0.1):
             "sirve Ollama."
         )
 
-    texts = [t for t, _ in hits]
     sources = []
-    for _, source in hits:
-        if source not in sources:
-            sources.append(source)
+    for hit in hits:
+        if hit["source"] not in sources:
+            sources.append(hit["source"])
+
+    citations = [
+        {
+            "id": n,
+            "kind": hit["kind"],
+            "source": hit["source"],
+            "title": (
+                hit["source"] if hit["kind"] == "upload"
+                else os.path.splitext(os.path.basename(hit["source"]))[0]
+            ),
+            "page": hit["page"],
+            "snippet": hit["text"][:400],
+        }
+        for n, hit in enumerate(hits, start=1)
+    ]
 
     return {
         "answer": answer,
-        "fragments": texts,
+        "fragments": [hit["text"] for hit in hits],
         "sources": sources,
+        "citations": citations,
+        "missing_attachments": missing,
     }
+
+
+def resolve_data_file(rel_path):
+    """Ruta absoluta de un documento de data/ a partir de su ruta relativa, o
+    None si no existe o intenta salirse de la carpeta (p.ej. con '..')."""
+    base = os.path.realpath(DATA_DIR)
+    full = os.path.realpath(os.path.join(base, rel_path))
+    if os.path.commonpath([base, full]) != base or not os.path.isfile(full):
+        return None
+    if os.path.splitext(full)[1].lower() not in SUPPORTED_EXTENSIONS:
+        return None
+    return full
 
 
 def send_to_rag(message, k=5):

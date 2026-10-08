@@ -1,3 +1,5 @@
+import csv
+import io
 import os
 import shutil
 import subprocess
@@ -10,6 +12,10 @@ from pypdf import PdfReader
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".txt", ".doc"}
 
+# Formatos aceptados para los archivos que el usuario adjunta en el chat. Son
+# los mismos del indice mas hojas de calculo (que no se indexan en data/).
+UPLOAD_EXTENSIONS = SUPPORTED_EXTENSIONS | {".xlsx", ".xlsm", ".csv"}
+
 
 def iter_document_paths(base_path):
     for root, _, files in os.walk(base_path):
@@ -20,9 +26,28 @@ def iter_document_paths(base_path):
 
 
 def read_document(path):
+    """Texto completo del documento (sin informacion de pagina)."""
+    return "\n".join(text for _, text in read_document_parts(path))
+
+
+def read_document_parts(path):
+    """Devuelve una lista de tuplas (pagina, texto).
+
+    Para PDF hay una tupla por pagina (numerada desde 1) para que las citas
+    puedan enlazar a la pagina exacta. El resto de formatos devuelve una sola
+    tupla con pagina None.
+    """
     ext = os.path.splitext(path)[1].lower()
     if ext == ".pdf":
-        return read_pdf(path)
+        return read_pdf_pages(path)
+    if ext in (".xlsx", ".xlsm"):
+        return [(None, read_xlsx(path))]
+    if ext == ".csv":
+        return [(None, read_csv(path))]
+    return [(None, _read_single(path, ext))]
+
+
+def _read_single(path, ext):
     if ext == ".docx":
         return read_docx(path)
     if ext == ".pptx":
@@ -70,33 +95,47 @@ def read_doc(path):
     except Exception:
         return ""
 
+def _safe_parts(path):
+    try:
+        return read_document_parts(path)
+    except Exception as exc:
+        print(f"[rag] No se pudo leer {path}: {exc}")
+        return []
+
+
 def load_all_document(base_path="data"):
-    """Devuelve una lista de tuplas (texto, fuente) con el contenido de cada
-    documento. La `fuente` es la ruta relativa al directorio de datos."""
+    """Devuelve una lista de tuplas (partes, fuente) con el contenido de cada
+    documento. `partes` es la salida de `read_document_parts` y la `fuente` es
+    la ruta relativa al directorio de datos."""
     paths = list(iter_document_paths(base_path))
     if not paths:
         return []
 
     max_workers = min(8, max(2, (os.cpu_count() or 2)))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        contents = list(executor.map(read_document, paths))
+        contents = list(executor.map(_safe_parts, paths))
 
     docs = []
-    for path, text in zip(paths, contents):
-        if text and text.strip():
+    for path, parts in zip(paths, contents):
+        parts = [(page, text) for page, text in parts if text and text.strip()]
+        if parts:
             rel = os.path.relpath(path, base_path)
-            docs.append((text, rel))
+            docs.append((parts, rel))
     return docs
 
 
 def read_pdf(path):
-    text = ""
+    return "\n".join(text for _, text in read_pdf_pages(path))
+
+
+def read_pdf_pages(path):
     reader = PdfReader(path)
-    for page in reader.pages:
+    pages = []
+    for number, page in enumerate(reader.pages, start=1):
         extracted = page.extract_text()
-        if extracted:
-            text += extracted + "\n"
-    return text
+        if extracted and extracted.strip():
+            pages.append((number, extracted))
+    return pages
 
 
 def read_docx(path):
@@ -115,5 +154,49 @@ def read_pptx(path):
 
 
 def read_txt(path):
-    with open(path, "r", encoding="utf-8") as file:
+    with open(path, "r", encoding="utf-8", errors="ignore") as file:
         return file.read()
+
+
+def read_xlsx(path):
+    try:
+        import openpyxl
+    except ImportError as exc:
+        raise RuntimeError(
+            "Para leer Excel instala openpyxl (pip install openpyxl)"
+        ) from exc
+    workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    blocks = []
+    try:
+        for sheet in workbook.worksheets:
+            rows = []
+            for row in sheet.iter_rows(values_only=True):
+                cells = ["" if v is None else str(v).strip() for v in row]
+                if any(cells):
+                    rows.append(" | ".join(cells).rstrip(" |"))
+            if rows:
+                blocks.append(f"Hoja: {sheet.title}\n\n" + "\n".join(rows))
+    finally:
+        workbook.close()
+    return "\n\n".join(blocks)
+
+
+def read_csv(path):
+    with open(path, "rb") as f:
+        raw = f.read()
+    for encoding in ("utf-8-sig", "latin-1"):
+        try:
+            text = raw.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    try:
+        dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t|")
+    except csv.Error:
+        dialect = csv.excel
+    rows = []
+    for row in csv.reader(io.StringIO(text), dialect):
+        cells = [c.strip() for c in row]
+        if any(cells):
+            rows.append(" | ".join(cells))
+    return "\n".join(rows)

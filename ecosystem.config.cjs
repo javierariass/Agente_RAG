@@ -28,7 +28,7 @@ module.exports = {
       ].join(" "),
       interpreter: "none",
       autorestart: true,
-      max_memory_restart: "2G",
+      max_memory_restart: "3G",
       merge_logs: true,
       time: true,
       out_file: "../logs/rag-api-out.log",

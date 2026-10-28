@@ -32,6 +32,12 @@ conecta a ella vía red usando su endpoint compatible con OpenAI (`/v1`).
   Excel, PowerPoint, TXT o CSV y preguntar sobre ellos además de la base
   documental. Los adjuntos **no** se guardan en `data/`: viven en memoria
   (4 h por defecto, `UPLOAD_TTL_SECONDS`) y se pierden si se reinicia la API.
+- **Voz a texto**: el botón del micrófono graba hasta 5 minutos y lo
+  transcribe; también se pueden subir audios (mp3, m4a, wav, ogg, opus,
+  webm…) con el botón **+** o arrastrándolos. La transcripción se hace en la
+  propia API con *faster-whisper* (nada sale de la red) y aparece en el chat
+  con botones para **copiar**, **usarla como pregunta** o **exportarla a
+  Word**. Ver la sección 11 para el requisito de HTTPS del micrófono.
 
 ---
 
@@ -251,3 +257,27 @@ pm2 restart agente-rag-api agente-rag-web
 | `pm2 status` muestra `errored`                        | `pm2 logs agente-rag-api --err --lines 100`                      |
 | Página web no carga desde otra PC                     | Falta abrir el puerto 4000 en el firewall                         |
 | La web carga pero las preguntas dan error de red      | El frontend no encuentra la API en `:3090` → revisa `config.js`  |
+
+---
+
+## 11. Voz a texto (micrófono y audios)
+
+- La primera transcripción descarga el modelo Whisper (`WHISPER_MODEL`,
+  `small` por defecto, ~460 MB) y tarda más; después queda cargado en
+  memoria. Si la máquina no tiene internet, descárgalo antes en otra y copia
+  la caché de Hugging Face (`~/.cache/huggingface/`).
+- Velocidad orientativa en CPU con `small`: 1 minuto de audio ≈ 15–40 s.
+  Con GPU NVIDIA usable (`WHISPER_DEVICE=auto`) es mucho más rápido; si la GPU
+  no sirve cae a CPU sola. Para más precisión, `WHISPER_MODEL=medium` o
+  `turbo` (más lentos en CPU). El modelo ocupa RAM extra (~1 GB con `small`);
+  por eso `max_memory_restart` de la API está en `3G` en
+  `ecosystem.config.cjs` (súbelo si usas `medium`/`large-v3`).
+- **Subir audios funciona siempre.** El **micrófono**, en cambio, el
+  navegador solo lo permite en un contexto seguro: `https://…` o
+  `http://localhost`. Si se abre la web por `http://<IP>:4000` el botón
+  avisará de ello. Opciones:
+  1. Poner la web y la API detrás de HTTPS (p. ej. Caddy o Nginx con un
+     certificado interno) — la solución recomendada.
+  2. Solución rápida por PC en Chrome/Edge: abrir
+     `chrome://flags/#unsafely-treat-insecure-origin-as-secure`, añadir
+     `http://<IP-DEL-SERVIDOR>:4000`, activar y reiniciar el navegador.

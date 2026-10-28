@@ -8,3 +8,6 @@ python-docx==1.2.0
 python-pptx==1.0.2
 python-dotenv==1.0.1
 openpyxl==3.1.5
+faster-whisper==1.2.1
+# av 19+ quito el parametro metadata_errors que usa faster-whisper 1.2.1
+av==16.1.0

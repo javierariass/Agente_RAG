@@ -88,6 +88,17 @@ UPLOAD_MAX_MB = int(_clean(os.getenv("UPLOAD_MAX_MB")) or "25")
 UPLOAD_TTL_SECONDS = int(_clean(os.getenv("UPLOAD_TTL_SECONDS")) or str(4 * 3600))
 UPLOAD_MAX_FILES = int(_clean(os.getenv("UPLOAD_MAX_FILES")) or "100")
 
+# Voz a texto (boton de microfono y audios subidos) con faster-whisper.
+# Modelos: tiny, base, small, medium, large-v3, turbo. "small" va bien en CPU
+# con español; "medium"/"turbo" son mas precisos pero mas lentos sin GPU.
+WHISPER_MODEL = _clean(os.getenv("WHISPER_MODEL")) or "small"
+WHISPER_DEVICE = _clean(os.getenv("WHISPER_DEVICE")) or "auto"
+# Idioma fijo (es) para que no se equivoque al detectarlo; "auto" lo detecta.
+WHISPER_LANGUAGE = _clean(os.getenv("WHISPER_LANGUAGE")) or "es"
+if WHISPER_LANGUAGE.lower() == "auto":
+    WHISPER_LANGUAGE = None
+AUDIO_MAX_MB = int(_clean(os.getenv("AUDIO_MAX_MB")) or "50")
+
 # Cada cuantos segundos el watcher comprueba si la carpeta data/ cambio
 # y, si es asi, reindexa en segundo plano sin detener el servicio.
 REINDEX_WATCH_SECONDS = int(_clean(os.getenv("REINDEX_WATCH_SECONDS")) or "30")

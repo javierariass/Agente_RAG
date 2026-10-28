@@ -12,7 +12,8 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 try:
-    from config import LLM_MAX_TOKENS, UPLOAD_MAX_MB
+    from config import AUDIO_MAX_MB, LLM_MAX_TOKENS, UPLOAD_MAX_MB
+    from transcribe import TranscriptionError, transcribe_audio
     from attachments import AttachmentError, add_attachment, remove_attachment
     from export_docx import build_docx
     from ollama_chat import (
@@ -23,7 +24,8 @@ try:
         warmup_index,
     )
 except ModuleNotFoundError:
-    from rag.config import LLM_MAX_TOKENS, UPLOAD_MAX_MB
+    from rag.config import AUDIO_MAX_MB, LLM_MAX_TOKENS, UPLOAD_MAX_MB
+    from rag.transcribe import TranscriptionError, transcribe_audio
     from rag.attachments import AttachmentError, add_attachment, remove_attachment
     from rag.export_docx import build_docx
     from rag.ollama_chat import (
@@ -147,22 +149,37 @@ def docs_info():
 async def upload(request: Request):
     """Recibe un archivo como cuerpo binario de la peticion (sin multipart) con
     el nombre en la cabecera X-Filename (codificado con encodeURIComponent)."""
+    filename, data = await _read_binary_body(request, UPLOAD_MAX_MB)
+    try:
+        return await run_in_threadpool(add_attachment, filename, data)
+    except AttachmentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/transcribe")
+async def transcribe(request: Request):
+    """Voz a texto. Mismo formato que /upload: el audio va como cuerpo binario
+    y el nombre (para saber el formato) en la cabecera X-Filename."""
+    filename, data = await _read_binary_body(request, AUDIO_MAX_MB)
+    try:
+        return await run_in_threadpool(transcribe_audio, filename, data)
+    except TranscriptionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+async def _read_binary_body(request: Request, max_mb: int):
     filename = unquote(request.headers.get("x-filename", ""))
-    limit = UPLOAD_MAX_MB * 1024 * 1024
+    limit = max_mb * 1024 * 1024
     declared = request.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > limit:
-        raise HTTPException(status_code=413, detail=f"El archivo supera {UPLOAD_MAX_MB} MB")
+        raise HTTPException(status_code=413, detail=f"El archivo supera {max_mb} MB")
 
     data = bytearray()
     async for chunk in request.stream():
         data.extend(chunk)
         if len(data) > limit:
-            raise HTTPException(status_code=413, detail=f"El archivo supera {UPLOAD_MAX_MB} MB")
-
-    try:
-        return await run_in_threadpool(add_attachment, filename, bytes(data))
-    except AttachmentError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise HTTPException(status_code=413, detail=f"El archivo supera {max_mb} MB")
+    return filename, bytes(data)
 
 
 @app.delete("/upload/{file_id}")

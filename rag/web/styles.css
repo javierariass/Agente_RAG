@@ -749,6 +749,84 @@ body[data-theme="light"] .composer {
   color: #003b5c;
 }
 
+/* Microfono y barra de grabacion */
+.mic-btn.is-recording {
+  background: var(--danger);
+  color: #fff;
+  animation: recPulse 1.4s ease-in-out infinite;
+}
+.mic-btn.is-recording:hover {
+  background: #c8463c;
+  color: #fff;
+}
+@keyframes recPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(226, 87, 76, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(226, 87, 76, 0);
+  }
+}
+.recorder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 6px 8px 6px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(226, 87, 76, 0.4);
+  background: rgba(226, 87, 76, 0.1);
+  color: var(--text);
+  font-size: 13px;
+}
+.recorder[hidden] {
+  display: none;
+}
+.rec-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: pulseDot 1.2s ease-in-out infinite;
+}
+.rec-label {
+  font-weight: 600;
+  color: var(--danger);
+}
+.rec-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-soft);
+  margin-right: auto;
+}
+.act-btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.act-btn--primary:hover {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+  color: #fff;
+}
+
+/* Transcripciones */
+.transcribing {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.transcript-head {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.75;
+  margin-bottom: 6px;
+}
+.transcript-text {
+  white-space: pre-wrap;
+  user-select: text;
+}
+
 #input {
   flex: 1;
   min-width: 0;
